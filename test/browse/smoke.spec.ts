@@ -62,6 +62,20 @@ async function dragByTouch(locator: Locator, deltaY: number) {
   }, deltaY);
 }
 
+function localDateOffset(offset: number) {
+  const now = new Date();
+  const date = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + offset,
+  );
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
 function stateForToday() {
   const today = new Date();
   const date = [
@@ -103,11 +117,125 @@ function stateForToday() {
   };
 }
 
+test("dedicated timeline browses dates and separates scroll from adjustment", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#/timeline");
+  await page.evaluate(
+    ({ key, state }) => localStorage.setItem(key, JSON.stringify(state)),
+    { key: storeKey, state: stateForToday() },
+  );
+  await page.reload();
+
+  await expect(page.getByRole("heading", { name: "Timeline" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Browse" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.locator(".timeline-gap").first()).toHaveCSS(
+    "touch-action",
+    "pan-y",
+  );
+  await page.locator(".time-axis-area").click({ position: { x: 20, y: 180 } });
+  await expect(page.locator(".creation-boundary")).toHaveCount(0);
+  await page.evaluate(() => window.scrollTo(0, 700));
+  const comparisonScrollY = await page.evaluate(() => window.scrollY);
+  const nextButtonX = (
+    await page.getByRole("button", { name: "Next day" }).boundingBox()
+  )?.x;
+
+  await page.getByRole("button", { name: "Previous day" }).click();
+  await expect(page).toHaveURL(new RegExp(`/timeline/${localDateOffset(-1)}$`));
+  await expect(page.getByRole("link", { name: "Timeline" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(page.locator(".activity-item")).toHaveCount(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(comparisonScrollY);
+  expect(
+    (await page.getByRole("button", { name: "Next day" }).boundingBox())?.x,
+  ).toBe(nextButtonX);
+
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await expect(page).toHaveURL(/\/timeline$/);
+  await expect(page.locator(".activity-item")).toHaveCount(2);
+  expect(await page.evaluate(() => window.scrollY)).toBe(comparisonScrollY);
+  expect(
+    (await page.getByRole("button", { name: "Next day" }).boundingBox())?.x,
+  ).toBe(nextButtonX);
+
+  await page.getByRole("button", { name: "Adjust times" }).click();
+  await expect(
+    page.getByRole("button", { name: "Adjust times" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".timeline-gap").first()).toHaveCSS(
+    "touch-action",
+    "none",
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        document.elementFromPoint(30, 300)?.closest(".time-axis-area") !== null,
+    ),
+  ).toBe(true);
+  await page.mouse.click(30, 300);
+  await expect(page.locator(".creation-boundary")).toHaveCount(0);
+  await page.evaluate(() => window.scrollTo(0, 1200));
+  await expect(page.locator(".app-nav")).toHaveCSS("position", "sticky");
+  expect((await page.locator(".app-nav").boundingBox())?.y).toBe(0);
+  expect((await page.locator(".timeline-toolbar").boundingBox())?.y).toBe(65);
+
+  await page.goto("/#/timeline/not-a-date");
+  await expect(page).toHaveURL(/\/timeline$/);
+});
+
+test("date switching preserves timeline position when toolbar controls wrap", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#/timeline");
+  // Force the wrapping threshold independently of the host's system font:
+  // Today + Now + mode controls need two rows; Today + mode would fit one.
+  await page.addStyleTag({
+    content: `
+      .date-actions button { width: 70px; }
+      .timeline-mode button { width: 110px; flex: none; }
+    `,
+  });
+  await page.evaluate(() => window.scrollTo(0, 700));
+  const geometry = () =>
+    page.evaluate(() => ({
+      scrollY: window.scrollY,
+      axisTop:
+        document.querySelector(".time-axis-area")!.getBoundingClientRect().top +
+        window.scrollY,
+      toolbarHeight: document
+        .querySelector(".timeline-toolbar")!
+        .getBoundingClientRect().height,
+    }));
+  const before = await geometry();
+
+  await page.getByRole("button", { name: "Previous day" }).click();
+  await expect(page).toHaveURL(new RegExp(`/timeline/${localDateOffset(-1)}$`));
+  await expect(
+    page.getByRole("button", { name: "Now", exact: true }),
+  ).toBeHidden();
+  expect(await geometry()).toEqual(before);
+
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await expect(page).toHaveURL(/\/timeline$/);
+  await expect(
+    page.getByRole("button", { name: "Now", exact: true }),
+  ).toBeVisible();
+  expect(await geometry()).toEqual(before);
+});
+
 test("mobile timeline fits and activity height matches duration", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
+  await page.goto("/#/timeline");
   await page.evaluate(
     ({ key, state }) => {
       localStorage.clear();
@@ -140,7 +268,7 @@ test("mobile tap edits a closed activity and persists after reload", async ({
     hasTouch: true,
   });
   const page = await context.newPage();
-  await page.goto("/");
+  await page.goto("/#/timeline");
   await page.evaluate(
     ({ key, state }) => localStorage.setItem(key, JSON.stringify(state)),
     { key: storeKey, state: stateForToday() },
@@ -179,14 +307,16 @@ test("two-click creation handles exact times, gaps, dragging, and takeover", asy
   const state = stateForToday();
   state.activities = [];
   state.nextId = 1;
-  await page.goto("/");
+  await page.goto("/#/timeline");
   await page.evaluate(
     ({ key, persisted }) =>
       localStorage.setItem(key, JSON.stringify(persisted)),
     { key: storeKey, persisted: state },
   );
   await page.reload();
-  await page.locator(".capture-panel .tag-toggle").nth(0).tap();
+  await page.locator(".timeline-tag-picker .tag-toggle").nth(0).tap();
+  await page.getByRole("button", { name: "Adjust times" }).tap();
+  await page.getByRole("button", { name: "Add interval" }).tap();
   const axis = page.locator(".time-axis-area");
 
   // Pick 05:00 first and 03:00 second: future time is allowed.
@@ -198,6 +328,7 @@ test("two-click creation handles exact times, gaps, dragging, and takeover", asy
   await axis.tap({ position: { x: 20, y: 180 } });
 
   // Pick 02:00, then claim the unfilled side through 03:00.
+  await page.getByRole("button", { name: "Add interval" }).tap();
   await axis.tap({ position: { x: 20, y: 120 } });
   await page
     .locator(".timeline-gap")
@@ -212,9 +343,10 @@ test("two-click creation handles exact times, gaps, dragging, and takeover", asy
   await dragByTouch(twoAmActivity, -15);
 
   // Select Meeting, split at 04:00, and claim the activity side above it.
-  const choices = page.locator(".capture-panel .tag-toggle");
+  const choices = page.locator(".timeline-tag-picker .tag-toggle");
   await choices.nth(0).tap();
   await choices.nth(1).tap();
+  await page.getByRole("button", { name: "Add interval" }).tap();
   await axis.tap({ position: { x: 20, y: 240 } });
   await page.locator('[data-activity-id="1"]').tap({
     position: { x: 100, y: 45 },
@@ -265,13 +397,14 @@ test("unfilled slots can be dragged, deleted, or assigned tags", async ({
     date: state.activities[0].date,
   });
   state.nextId = 4;
-  await page.goto("/");
+  await page.goto("/#/timeline");
   await page.evaluate(
     ({ key, persisted }) =>
       localStorage.setItem(key, JSON.stringify(persisted)),
     { key: storeKey, persisted: state },
   );
   await page.reload();
+  await page.getByRole("button", { name: "Adjust times" }).click();
 
   await expect(page.locator(".activity-border")).toHaveCount(0);
   const internalGap = page.locator(".timeline-gap").nth(1);
@@ -339,7 +472,7 @@ test("mobile deletion requires confirmation and persists after reload", async ({
     hasTouch: true,
   });
   const page = await context.newPage();
-  await page.goto("/");
+  await page.goto("/#/timeline");
   await page.evaluate(
     ({ key, state }) => localStorage.setItem(key, JSON.stringify(state)),
     { key: storeKey, state: stateForToday() },
@@ -352,6 +485,7 @@ test("mobile deletion requires confirmation and persists after reload", async ({
   await expect(page.locator('[data-activity-id="1"]')).toBeVisible();
   await editor.getByRole("button", { name: "Confirm delete activity" }).tap();
   await expect(page.locator('[data-activity-id="1"]')).toHaveCount(0);
+  await page.getByRole("link", { name: "Today", exact: true }).tap();
   await expect(page.locator(".today-receipt")).not.toContainText("Focus");
 
   await page.reload();
@@ -363,6 +497,75 @@ test("mobile deletion requires confirmation and persists after reload", async ({
     }, storeKey),
   ).toEqual([2]);
   await context.close();
+});
+
+test("recent combinations require an explicit Start or Switch", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.evaluate(
+    ({ key, state }) => localStorage.setItem(key, JSON.stringify(state)),
+    { key: storeKey, state: stateForToday() },
+  );
+  await page.reload();
+
+  await expect(page.locator(".capture-current")).toContainText("Not tracking");
+  await page.locator(".recent-activity-button").first().click();
+  await expect(page.locator(".capture-current")).toContainText("Not tracking");
+  await page.getByRole("button", { name: "Start", exact: true }).click();
+  await expect(page.locator(".capture-current")).not.toContainText(
+    "Not tracking",
+  );
+});
+
+test("a running activity survives midnight and persists the daily split", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.evaluate(
+    ({ key, state }) => {
+      const now = new Date();
+      const startedAtMs = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - 1,
+        23,
+        30,
+      ).getTime();
+      state.activities = [];
+      state.nextId = 1;
+      state.runningActivity = { tagIds: ["focus"], startedAtMs };
+      localStorage.setItem(key, JSON.stringify(state));
+    },
+    { key: storeKey, state: stateForToday() },
+  );
+  await page.reload();
+
+  await expect(page.locator(".capture-current")).toContainText("Focus");
+  const readSplit = () =>
+    page.evaluate((key) => {
+      const state = JSON.parse(localStorage.getItem(key)!);
+      const now = new Date();
+      const todayMidnightMs = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+      ).getTime();
+      return {
+        activityCount: state.activities.length,
+        firstDuration: state.activities[0]?.duration_minutes,
+        runningStartsToday:
+          state.runningActivity?.startedAtMs === todayMidnightMs,
+      };
+    }, storeKey);
+  await expect.poll(readSplit).toEqual({
+    activityCount: 1,
+    firstDuration: 30,
+    runningStartsToday: true,
+  });
+
+  await page.reload();
+  await expect.poll(readSplit).toMatchObject({ activityCount: 1 });
 });
 
 test("follows the system color scheme", async ({ page }) => {
@@ -468,17 +671,31 @@ test("archived tags leave historical display but disappear from capture", async 
     archived: true,
   } as (typeof state.tagGroups)[0]["tags"][number];
   await page.goto("/");
+  const browserToday = await page.evaluate(() => {
+    const date = new Date();
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0"),
+    ].join("-");
+  });
+  state.activities.forEach((activity, index) => {
+    activity.date = browserToday;
+    activity.start_time_minutes = index;
+    activity.duration_minutes = 1;
+  });
   await page.evaluate(
     ({ key, persisted }) =>
       localStorage.setItem(key, JSON.stringify(persisted)),
     { key: storeKey, persisted: state },
   );
   await page.reload();
-  await expect(page.locator('[data-activity-id="1"]')).toHaveText("Focus");
   await expect(
     page.getByRole("button", { name: "Focus", exact: true }),
   ).toHaveCount(0);
   await expect(page.locator(".tag-total-group")).toContainText("Focus");
+  await page.getByRole("link", { name: "Timeline", exact: true }).click();
+  await expect(page.locator('[data-activity-id="1"]')).toHaveText("Focus");
 });
 
 test("dragging the broad activity surface moves the same local boundary", async ({
@@ -493,13 +710,14 @@ test("dragging the broad activity surface moves the same local boundary", async 
     date: state.activities[0].date,
   });
   state.nextId = 4;
-  await page.goto("/");
+  await page.goto("/#/timeline");
   await page.evaluate(
     ({ key, persisted }) =>
       localStorage.setItem(key, JSON.stringify(persisted)),
     { key: storeKey, persisted: state },
   );
   await page.reload();
+  await page.getByRole("button", { name: "Adjust times" }).click();
   const first = page.locator('[data-activity-id="1"]');
   await first.scrollIntoViewIfNeeded();
   const box = await first.boundingBox();

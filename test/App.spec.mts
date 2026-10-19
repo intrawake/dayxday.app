@@ -6,6 +6,7 @@ describe("App.vue", () => {
   it("does not expose the destructive developer controls", () => {
     const wrapper = mount(App, {
       global: {
+        mocks: { $route: { path: "/" } },
         stubs: {
           RouterView: true,
           RouterLink: { template: "<a><slot /></a>" },

@@ -67,7 +67,7 @@ describe("CapturePanel", () => {
     });
   });
 
-  it("shows elapsed time and supports recent, stop, and undo", async () => {
+  it("selects recent combinations before an explicit switch", async () => {
     const store = configure();
     store.initializeActivities([
       {
@@ -83,6 +83,8 @@ describe("CapturePanel", () => {
     expect(wrapper.get('[aria-live="polite"]').text()).toBe("Home");
     expect(wrapper.get(".capture-elapsed").text()).toBe("00:01:30");
     await wrapper.get(".recent-activity-button").trigger("click");
+    expect(store.runningActivity?.tagIds).toEqual(["home"]);
+    await wrapper.get(".start-button").trigger("click");
     expect(store.runningActivity?.tagIds).toEqual(["office", "focus"]);
     await wrapper
       .findAll("button")

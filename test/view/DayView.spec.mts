@@ -16,6 +16,10 @@ function mockAxis(wrapper: VueWrapper, top = 0) {
   return axis;
 }
 
+async function startIntervalCreation(wrapper: VueWrapper) {
+  await wrapper.get(".start-creation").trigger("click");
+}
+
 describe("DayView", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
@@ -63,7 +67,7 @@ describe("DayView", () => {
       ["top: 180px; height: 1260px;", "Unfilled"],
     ]);
     expect(wrapper.get(".timeline-help").text()).toContain(
-      "Tap the time margin to choose a boundary",
+      "Choose Add interval to create exact time",
     );
     expect(wrapper.findAll(".timeline-gap")[0].attributes("disabled")).toBe(
       undefined,
@@ -136,12 +140,27 @@ describe("DayView", () => {
     wrapper.unmount();
   });
 
+  it("keeps the time margin passive until Add interval is chosen", async () => {
+    const wrapper = mount(DayView);
+    const axis = mockAxis(wrapper);
+
+    await axis.trigger("click", { clientY: 180 });
+    expect(wrapper.find(".creation-boundary").exists()).toBe(false);
+
+    await startIntervalCreation(wrapper);
+    await axis.trigger("click", { clientY: 180 });
+    expect(wrapper.get(".creation-boundary").attributes("style")).toContain(
+      "top: 180px",
+    );
+  });
+
   it("creates an exact future interval from two margin clicks in either order", async () => {
     const store = useActivityStore();
     store.initializeActivities([]);
     const wrapper = mount(DayView);
     const axis = mockAxis(wrapper);
     await wrapper.findAll(".tag-toggle")[0].trigger("click");
+    await startIntervalCreation(wrapper);
 
     await axis.trigger("click", { clientY: 300 });
     expect(wrapper.get(".timeline-help").text()).toContain("Boundary at 05:00");
@@ -161,6 +180,7 @@ describe("DayView", () => {
 
     store.clearActivitiesForDay(day);
     await wrapper.vm.$nextTick();
+    await startIntervalCreation(wrapper);
     await axis.trigger("click", { clientY: 180 });
     await axis.trigger("click", { clientY: 300 });
     expect(store.getActivitiesForDay(day)).toMatchObject([
@@ -185,6 +205,7 @@ describe("DayView", () => {
     ]);
     const wrapper = mount(DayView);
     const axis = mockAxis(wrapper);
+    await startIntervalCreation(wrapper);
 
     await axis.trigger("click", { clientY: 120 });
     const upperGap = wrapper.findAll(".timeline-gap")[0];
@@ -220,6 +241,7 @@ describe("DayView", () => {
     const toggles = wrapper.findAll(".tag-toggle");
     await toggles[0].trigger("click");
     await toggles[1].trigger("click");
+    await startIntervalCreation(wrapper);
     await axis.trigger("click", { clientY: 240 });
 
     const activity = wrapper.get('[data-activity-id="1"]');
@@ -248,11 +270,13 @@ describe("DayView", () => {
   it("keeps pending creation visible until Cancel or Escape", async () => {
     const wrapper = mount(DayView);
     const axis = mockAxis(wrapper);
+    await startIntervalCreation(wrapper);
     await axis.trigger("click", { clientY: 240 });
     expect(wrapper.find(".creation-boundary").exists()).toBe(true);
     await wrapper.get(".cancel-creation").trigger("click");
     expect(wrapper.find(".creation-boundary").exists()).toBe(false);
 
+    await startIntervalCreation(wrapper);
     await axis.trigger("click", { clientY: 240 });
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     await wrapper.vm.$nextTick();
@@ -264,6 +288,7 @@ describe("DayView", () => {
     store.initializeActivities([]);
     const wrapper = mount(DayView);
     const axis = mockAxis(wrapper);
+    await startIntervalCreation(wrapper);
 
     await axis.trigger("click", { clientY: 180 });
     expect(wrapper.get(".timeline-help").text()).toContain("Select tags above");
@@ -279,7 +304,7 @@ describe("DayView", () => {
     ]);
   });
 
-  it("rolls its local day at midnight, reconciles, and cleans up its timer", async () => {
+  it("rolls its local day at midnight, closes stale editing, and reconciles", async () => {
     vi.useFakeTimers();
     const beforeMidnight = new Date(2024, 4, 10, 23, 59, 59, 500);
     vi.setSystemTime(beforeMidnight);
@@ -295,8 +320,11 @@ describe("DayView", () => {
     expect(wrapper.vm.editingGap.date).toBe("2024-05-10");
     await vi.advanceTimersByTimeAsync(1000);
     expect(wrapper.vm.currentDate).toBe("2024-05-11");
-    expect(wrapper.vm.editingGap.date).toBe("2024-05-10");
-    expect(store.runningActivity).toBeNull();
+    expect(wrapper.vm.editingGap).toBeNull();
+    expect(store.runningActivity).toEqual({
+      tagIds: ["focus"],
+      startedAtMs: new Date(2024, 4, 11).getTime(),
+    });
     expect(store.activities[0].tagIds).toEqual(["focus"]);
     wrapper.unmount();
     expect(vi.getTimerCount()).toBe(0);

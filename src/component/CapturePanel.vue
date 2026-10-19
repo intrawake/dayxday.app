@@ -27,7 +27,7 @@
         :recent-tag-selections="activityStore.recentTagSelections"
         :title-for-selection="activityStore.titleForSelection"
         recent-class="capture-recent"
-        @select-recent="useRecent"
+        @select-recent="selectRecent"
       />
     </template>
 
@@ -112,9 +112,8 @@ const elapsed = computed(() => {
     .join(":");
 });
 
-function useRecent(tagIds: string[]) {
+function selectRecent(tagIds: string[]) {
   selectedTagIds.value = [...tagIds];
-  activityStore.transitionTo(tagIds, props.nowMs);
 }
 </script>
 

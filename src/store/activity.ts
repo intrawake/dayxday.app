@@ -359,11 +359,21 @@ export const useActivityStore = defineStore("dayxday-structured-tags-v1", {
         this.invalidateCaptureUndo();
         return;
       }
-      const midnight = getNextLocalMidnightMs(this.runningActivity.startedAtMs);
-      if (nowMs < midnight) return;
-      this.appendClosedRunningActivity(this.runningActivity, midnight);
-      this.runningActivity = null;
-      this.invalidateCaptureUndo();
+      let crossedMidnight = false;
+      while (this.runningActivity !== null) {
+        const midnight = getNextLocalMidnightMs(
+          this.runningActivity.startedAtMs,
+        );
+        if (nowMs < midnight) break;
+        const continued = cloneRunning(this.runningActivity)!;
+        this.appendClosedRunningActivity(continued, midnight);
+        this.runningActivity = {
+          tagIds: continued.tagIds,
+          startedAtMs: midnight,
+        };
+        crossedMidnight = true;
+      }
+      if (crossedMidnight) this.invalidateCaptureUndo();
     },
     transitionTo(tagIds: readonly string[], nowMs: number) {
       if (!Array.isArray(tagIds) || !Number.isFinite(nowMs)) return;

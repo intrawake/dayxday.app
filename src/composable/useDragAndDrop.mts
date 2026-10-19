@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted, ref, nextTick, type Ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, nextTick, type Ref } from "vue";
 import { useActivityStore } from "../store/activity";
 import { calculateSnappedY } from "../function/calculateSnappedY";
 import { isMouseInTimeAxisArea } from "../function/isMouseInTimeAxisArea";
@@ -24,6 +24,7 @@ export function useDragAndDrop(
     clientY: number,
     trigger: HTMLElement,
   ) => void,
+  enabled?: Ref<boolean>,
 ) {
   const activityStore = useActivityStore();
   const isDragging = ref(false);
@@ -55,6 +56,7 @@ export function useDragAndDrop(
   // --- Event Handlers ---
 
   function prepareDrag(e: MouseEvent | TouchEvent, item: Element) {
+    if (enabled?.value === false) return false;
     const position = pointerPosition(e);
     if (!position) return false;
     isDragging.value = true;
@@ -335,7 +337,8 @@ export function useDragAndDrop(
     });
   });
 
-  onUnmounted(() => {
+  onBeforeUnmount(() => {
+    cancelDrag();
     const activityList = document.querySelector(".activity-list");
     if (activityList) {
       activityList.removeEventListener("mousedown", handleMouseDown);

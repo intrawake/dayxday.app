@@ -117,7 +117,7 @@ describe("structured one-tap capture store", () => {
     expect(store.runningActivity?.startedAtMs).toBe(start);
   });
 
-  it("closes only through local midnight and expires undo", () => {
+  it("splits at local midnight, keeps tracking, and expires undo", () => {
     const store = storeWithTags();
     const started = at(10, 23, 30);
     const midnight = getNextLocalMidnightMs(started);
@@ -128,8 +128,40 @@ describe("structured one-tap capture store", () => {
       start_time_minutes: 1410,
       duration_minutes: 30,
     });
-    expect(store.runningActivity).toBeNull();
+    expect(store.runningActivity).toEqual({
+      tagIds: ["focus"],
+      startedAtMs: midnight,
+    });
     expect(store.canUndoLastTransition).toBe(false);
+  });
+
+  it("fills every missed day and keeps the current day open", () => {
+    const store = storeWithTags();
+    const started = at(10, 23, 30);
+    const firstMidnight = getNextLocalMidnightMs(started);
+    const secondMidnight = getNextLocalMidnightMs(firstMidnight);
+    store.transitionTo(["focus"], started);
+
+    store.reconcileRunning(secondMidnight + 60 * 60_000);
+
+    expect(store.activities).toMatchObject([
+      {
+        tagIds: ["focus"],
+        date: "2024-05-10",
+        start_time_minutes: 1410,
+        duration_minutes: 30,
+      },
+      {
+        tagIds: ["focus"],
+        date: "2024-05-11",
+        start_time_minutes: 0,
+        duration_minutes: 1440,
+      },
+    ]);
+    expect(store.runningActivity).toEqual({
+      tagIds: ["focus"],
+      startedAtMs: secondMidnight,
+    });
   });
 
   it("uses the DST-aware interval to local midnight", () => {
@@ -139,8 +171,10 @@ describe("structured one-tap capture store", () => {
       const store = storeWithTags();
       const started = new Date(2024, 2, 10, 0).getTime();
       store.transitionTo(["focus"], started);
-      store.reconcileRunning(getNextLocalMidnightMs(started));
+      const midnight = getNextLocalMidnightMs(started);
+      store.reconcileRunning(midnight);
       expect(store.activities[0].duration_minutes).toBe(23 * 60);
+      expect(store.runningActivity?.startedAtMs).toBe(midnight);
     } finally {
       process.env.TZ = originalTimezone;
     }

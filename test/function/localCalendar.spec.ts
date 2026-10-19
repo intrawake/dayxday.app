@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  addLocalDays,
   getLocalDayAtMs,
   getLocalMinuteOfDay,
   getNextLocalMidnightMs,
+  localDateFromString,
 } from "@/function/localCalendar";
 
 describe("local calendar helpers", () => {
@@ -37,6 +39,15 @@ describe("local calendar helpers", () => {
     } finally {
       process.env.TZ = originalTimezone;
     }
+  });
+
+  it("validates and moves local date strings without fixed-day arithmetic", () => {
+    expect(localDateFromString("2024-02-29")).not.toBeNull();
+    expect(localDateFromString("2023-02-29")).toBeNull();
+    expect(localDateFromString("2024-2-09")).toBeNull();
+    expect(addLocalDays("2024-03-09", 1)).toBe("2024-03-10");
+    expect(addLocalDays("2024-12-31", 1)).toBe("2025-01-01");
+    expect(addLocalDays("2025-01-01", -1)).toBe("2024-12-31");
   });
 
   it("advances across month and year boundaries", () => {

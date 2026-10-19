@@ -237,6 +237,36 @@ describe("useDragAndDrop", () => {
     ]);
   });
 
+  it("rolls an unfinished drag back when the timeline unmounts", async () => {
+    await nextTick();
+    const activityStore = useActivityStore();
+
+    startDrag(
+      new MouseEvent("mousedown", { clientX: 20, clientY: 150 }),
+      mockElementA,
+      0,
+    );
+    moveDrag(new MouseEvent("mousemove", { clientX: 150, clientY: 185 }));
+    expect(
+      activityStore.getActivitiesForDay(TEST_DATE)[0].duration_minutes,
+    ).not.toBe(100);
+
+    wrapper.unmount();
+
+    expect(
+      activityStore
+        .getActivitiesForDay(TEST_DATE)
+        .map((activity) => [
+          activity.start_time_minutes,
+          activity.duration_minutes,
+        ]),
+    ).toEqual([
+      [100, 100],
+      [200, 100],
+      [300, 100],
+    ]);
+  });
+
   it("uses a real surface drag to move only the shared boundary", async () => {
     await nextTick();
 
